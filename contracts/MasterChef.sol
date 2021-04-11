@@ -57,6 +57,7 @@ contract MasterChef is Ownable {
         uint256 allocPoint;       // How many allocation points assigned to this pool. GMEs to distribute per block.
         uint256 lastRewardBlock;  // Last block number that GMEs distribution occurs.
         uint256 accGmePerShare; // Accumulated GMEs per share, times 1e12. See below.
+        uint16 depositFee;      // Deposit fee in basis points
     }
 
     // The GME TOKEN!
@@ -65,6 +66,8 @@ contract MasterChef is Ownable {
     GmeBar public gmebar;
     // Dev address.
     address public devaddr;
+    // Fee address
+    address public feeaddr;
     // GME tokens created per block.
     uint256 public gmePerBlock;
     // Bonus muliplier for early gme makers.
@@ -89,12 +92,14 @@ contract MasterChef is Ownable {
         GameToken _gme,
         GmeBar _gmebar,
         address _devaddr,
+        address _feeaddr,
         uint256 _gmePerBlock,
         uint256 _startBlock
     ) public {
         gme = _gme;
         gmebar = _gmebar;
         devaddr = _devaddr;
+        feeaddr = _feeaddr;
         gmePerBlock = _gmePerBlock;
         startBlock = _startBlock;
 
@@ -103,7 +108,8 @@ contract MasterChef is Ownable {
             lpToken: _gme,
             allocPoint: 1000,
             lastRewardBlock: startBlock,
-            accGmePerShare: 0
+            accGmePerShare: 0,
+            depositFee: 0
         }));
 
         totalAllocPoint = 1000;
@@ -119,7 +125,9 @@ contract MasterChef is Ownable {
 
     // Add a new lp to the pool. Can only be called by the owner.
     // XXX DO NOT add the same LP token more than once. Rewards will be messed up if you do.
-    function add(uint256 _allocPoint, IBEP20 _lpToken, bool _withUpdate) public onlyOwner {
+    function add(uint256 _allocPoint, IBEP20 _lpToken, uint16 _depositFee, bool _withUpdate) public onlyOwner {
+        require(_depositFee <= 10000, "set: invalid deposit fee basis points");
+
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -129,18 +137,20 @@ contract MasterChef is Ownable {
             lpToken: _lpToken,
             allocPoint: _allocPoint,
             lastRewardBlock: lastRewardBlock,
-            accGmePerShare: 0
+            accGmePerShare: 0,
+            depositFee: _depositFee
         }));
         updateStakingPool();
     }
 
-    // Update the given pool's GME allocation point. Can only be called by the owner.
-    function set(uint256 _pid, uint256 _allocPoint, bool _withUpdate) public onlyOwner {
+    // Update the given pool's GME allocation point and deposit fee. Can only be called by the owner.
+    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFee, bool _withUpdate) public onlyOwner {
         if (_withUpdate) {
             massUpdatePools();
         }
         uint256 prevAllocPoint = poolInfo[_pid].allocPoint;
         poolInfo[_pid].allocPoint = _allocPoint;
+        poolInfo[_pid].depositFee = _depositFee;
         if (prevAllocPoint != _allocPoint) {
             totalAllocPoint = totalAllocPoint.sub(prevAllocPoint).add(_allocPoint);
             updateStakingPool();
@@ -240,7 +250,13 @@ contract MasterChef is Ownable {
         }
         if (_amount > 0) {
             pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
-            user.amount = user.amount.add(_amount);
+            if (pool.depositFee > 0) {
+                uint256 depositFee = _amount.mul(pool.depositFee).div(10000);
+                pool.lpToken.safeTransfer(feeaddr, depositFee);
+                user.amount = user.amount.add(_amount).sub(depositFee);
+            } else {
+                user.amount = user.amount.add(_amount);
+            }
         }
         user.rewardDebt = user.amount.mul(pool.accGmePerShare).div(1e12);
         emit Deposit(msg.sender, _pid, _amount);
