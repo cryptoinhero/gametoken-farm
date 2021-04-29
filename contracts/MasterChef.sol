@@ -62,28 +62,47 @@ contract MasterChef is Ownable {
 
     // The GME TOKEN!
     GameToken public gme;
+    
     // The GMEB TOKEN!
     GmeBar public gmebar;
+    
     // Dev address.
     address public devaddr;
+    
     // Fee address
     address public feeaddr;
+    
     // GME tokens created per block.
     uint256 public gmePerBlock;
+    
     // Bonus muliplier for early gme makers.
     uint256 public BONUS_MULTIPLIER = 1;
+    
+    IBEP20 public busd;
+    
+    address public busdGmeLP;
+    
     // The migrator contract. It has a lot of power. Can only be set through governance (owner).
     IMigratorChef public migrator;
 
     // Info of each pool.
     PoolInfo[] public poolInfo;
+    
     // Info of each user that stakes LP tokens.
     mapping (uint256 => mapping (address => UserInfo)) public userInfo;
+    
     // Total allocation points. Must be the sum of all allocation points in all pools.
     uint256 public totalAllocPoint = 0;
+    
     // The block number when GME mining starts.
     uint256 public startBlock;
-
+    
+    uint public topPrice = 100; // 10$
+    uint public bottomPrice = 10; //100$
+    uint public lastBlockUpdate = 0;
+    uint public emissionUpdateInterval = 3600; // 3 hours
+    
+    
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -91,6 +110,8 @@ contract MasterChef is Ownable {
     constructor(
         GameToken _gme,
         GmeBar _gmebar,
+        IBEP20 _busd,
+        address _busdGmeLP,
         address _devaddr,
         address _feeaddr,
         uint256 _gmePerBlock,
@@ -100,6 +121,8 @@ contract MasterChef is Ownable {
         gmebar = _gmebar;
         devaddr = _devaddr;
         feeaddr = _feeaddr;
+        busd = _busd;
+        busdGmeLP = _busdGmeLP;
         gmePerBlock = _gmePerBlock;
         startBlock = _startBlock;
 
@@ -170,21 +193,21 @@ contract MasterChef is Ownable {
         }
     }
 
-    // // Set the migrator contract. Can only be called by the owner.
-    // function setMigrator(IMigratorChef _migrator) public onlyOwner {
-    //     migrator = _migrator;
-    // }
+    // Set the migrator contract. Can only be called by the owner.
+  //  function setMigrator(IMigratorChef _migrator) public onlyOwner {
+    //    migrator = _migrator;
+//    }
 
-    // // Migrate lp token to another lp contract. Can be called by anyone. We trust that migrator contract is good.
-    // function migrate(uint256 _pid) public {
-    //     require(address(migrator) != address(0), "migrate: no migrator");
-    //     PoolInfo storage pool = poolInfo[_pid];
-    //     IBEP20 lpToken = pool.lpToken;
-    //     uint256 bal = lpToken.balanceOf(address(this));
-    //     lpToken.safeApprove(address(migrator), bal);
-    //     IBEP20 newLpToken = migrator.migrate(lpToken);
-    //     require(bal == newLpToken.balanceOf(address(this)), "migrate: bad");
-    //     pool.lpToken = newLpToken;
+  //  // Migrate lp token to another lp contract. Can be called by anyone. We trust that migrator contract is good.
+//    function migrate(uint256 _pid) public {
+  //      require(address(migrator) != address(0), "migrate: no migrator");
+    //    PoolInfo storage pool = poolInfo[_pid];
+      //  IBEP20 lpToken = pool.lpToken;
+        // uint256 bal = lpToken.balanceOf(address(this));
+        // lpToken.safeApprove(address(migrator), bal);
+        // IBEP20 newLpToken = migrator.migrate(lpToken);
+        // require(bal == newLpToken.balanceOf(address(this)), "migrate: bad");
+        // pool.lpToken = newLpToken;
     // }
 
     // Return reward multiplier over the given _from to _to block.
@@ -281,6 +304,7 @@ contract MasterChef is Ownable {
         }
         user.rewardDebt = user.amount.mul(pool.accGmePerShare).div(1e12);
         emit Withdraw(msg.sender, _pid, _amount);
+        updateEmissionIfNeeded();
     }
 
     // Stake GME tokens to MasterChef
@@ -322,6 +346,7 @@ contract MasterChef is Ownable {
 
         gmebar.burn(msg.sender, _amount);
         emit Withdraw(msg.sender, 0, _amount);
+        updateEmissionIfNeeded();
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
@@ -343,5 +368,46 @@ contract MasterChef is Ownable {
     function dev(address _devaddr) public {
         require(msg.sender == devaddr, "dev: wut?");
         devaddr = _devaddr;
+    }
+    
+        //Pancake has to add hidden dummy pools inorder to alter the emission, here we make it simple and transparent to all.
+    function updateEmissionRate(uint256 _gmePerBlock) public onlyOwner {
+        massUpdatePools();
+        gmePerBlock = _gmePerBlock;
+    }
+
+    function updatePriceLPAddress(address lpAddr) public onlyOwner {
+        busdGmeLP = lpAddr;
+    }
+
+    function updateEmissionIfNeeded() public {
+        if (block.number - lastBlockUpdate > emissionUpdateInterval) { //every 3 hours
+             lastBlockUpdate = block.number;
+             
+             uint gmeBalance = gme.balanceOf(busdGmeLP);
+             uint priceCents = bottomPrice * 100;
+             if (gmeBalance > 0) {
+                massUpdatePools();
+                priceCents = busd.balanceOf(busdGmeLP).mul(100).div(gmeBalance);    
+             }
+
+             if (priceCents < bottomPrice * 100) {
+                massUpdatePools();
+                gmePerBlock = priceCents.mul(1e18).div(bottomPrice).div(100);
+             } else
+             if (priceCents > topPrice * 100) {
+                 massUpdatePools();
+                gmePerBlock = priceCents.mul(1e18).div(topPrice).div(100);
+             } else if (gmePerBlock != 1e18) {
+                 massUpdatePools();
+                 gmePerBlock = 1e18;
+             }
+        }
+    }
+    
+    function updateEmissionParameters(uint _topPrice, uint _bottomPrice, uint _emissionUpdateInterval) public onlyOwner {
+        topPrice = _topPrice;
+        bottomPrice = _bottomPrice;
+        emissionUpdateInterval = _emissionUpdateInterval;
     }
 }
