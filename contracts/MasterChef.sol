@@ -374,8 +374,10 @@ contract MasterChef is Ownable {
         gmePerBlock = _gmePerBlock;
     }
 
-    function updatePriceLPAddress(address lpAddr) public onlyOwner {
-        busdGmeLP = lpAddr;
+    function updatePriceLPAddress(address _busdGmeLP) public onlyOwner {
+        require(_busdGmeLP != address(0));
+
+        busdGmeLP = _busdGmeLP;
     }
 
     function updateEmissionIfNeeded() public {
